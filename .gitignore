@@ -1,0 +1,18 @@
+node_modules/
+
+# Build output — regenerate with `npm run build`
+dist/
+
+# Original upstream build, extracted from rentvine-mcp-1.3.2.tgz for diffing.
+# Recreate with: tar -xzf rentvine-mcp-1.3.2.tgz && mv package reference/dist-1.3.2-original
+reference/
+
+# Credentials
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
