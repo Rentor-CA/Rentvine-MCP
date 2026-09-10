@@ -18,6 +18,7 @@ MCP server for [Rentvine](https://rentvine.com) — gives Claude (and any MCP cl
 | `list_work_orders` | Work orders with status and priority |
 | `create_work_order` | Create a new maintenance work order |
 | `update_work_order` | Update status, priority, cost, or scheduling on a work order |
+| `list_tenants` | All tenants with contact details and status; `search` / `active_only` filters. Withholds PII unless `include_sensitive=true` |
 | `get_tenant_balance` | Ledger balance for a named tenant |
 | `list_owners` | All property owners |
 | `list_vendors` | All vendors with full contact, insurance, billing, and audit fields (45 fields) |
@@ -205,7 +206,23 @@ Endpoints documented in `src/apiDocs.ts` but not yet wrapped include the eleven
 - **No pagination on list tools.** `list_properties`, `list_leases`, `list_work_orders`, `list_bills`, `list_vendors`, and `list_accounts` send no `page`/`pageSize`, and Rentvine defaults to 15–25 rows. They will silently truncate as the portfolio grows. Only `search_transactions` exposes paging.
 - **`unwrap()` returns `[]` on unrecognized shapes** (`src/client.ts`), so an API contract change reads as "no results" rather than an error.
 - **Fuzzy lookups take first match.** `list_units` and `get_tenant_balance` substring-match names and silently pick the first hit.
-- **`fetchTenants()` calls `/tenants`**, but `src/apiDocs.ts` documents `/tenants/search`.
+- **`list_tenants` paging is unverified.** `page`/`page_size` are passed through to `GET /tenants`, but that endpoint's paging behavior is unconfirmed. If Rentvine ignores them, results are silently capped at its default page size. `search` and `active_only` are applied **client-side, after** the fetch, so they filter only what came back on that page.
+
+### Handling tenant PII
+
+Rentvine serves tenants, vendors, and owners from one shared contact schema, so
+every tenant record carries `birthDate`, `identificationNumber`,
+`identificationTypeID`, and `achAccountNumberTruncated` — real PII on a consumer.
+
+`list_tenants` therefore splits its projection: identity, contact, status, and
+audit fields by default; date of birth, government ID, tax/payee, and
+payout/ACH fields only when `include_sensitive=true`. Without that split, a bare
+"list the tenants" request would put every tenant's DOB and bank details into
+the model's context window.
+
+If you'd rather have the full record by default, drop the `include_sensitive`
+branch at the end of `listTenants()` in `src/tools.ts` and always spread
+`projectTenantSensitive(c)`.
 
 ## Troubleshooting
 

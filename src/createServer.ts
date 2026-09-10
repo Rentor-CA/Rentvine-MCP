@@ -224,6 +224,49 @@ export function createServer(): McpServer {
   /* ---------------------------------------------------------------- */
 
   server.registerTool(
+    "list_tenants",
+    {
+      description:
+        "List all tenants from Rentvine (live data). Returns contact ID, full name and name components, email, phone, address, active status, linked applicant ID, and audit timestamps. Use this to look up a tenant's contact details or to get a contact_id for other calls. " +
+        "Filter with search (matches name, email, or phone) and active_only. " +
+        "By default this omits personally sensitive fields; set include_sensitive=true only when the task actually requires them — see that parameter's description.",
+      inputSchema: {
+        search: z
+          .string()
+          .optional()
+          .describe(
+            "Case-insensitive substring filter matched against name, email, and phone. Applied client-side after fetching.",
+          ),
+        active_only: z
+          .boolean()
+          .optional()
+          .describe(
+            "If true, return only tenants with isActive=1. Defaults to false (returns all tenants, active and inactive).",
+          ),
+        include_sensitive: z
+          .boolean()
+          .optional()
+          .describe(
+            "If true, additionally return date of birth, government identification number and type, tax/payee details, and payout/ACH banking fields. Defaults to false. Tenants share Rentvine's contact schema with vendors, so these fields exist on every tenant record — leave this off unless the task genuinely requires them, and treat any output as confidential PII.",
+          ),
+        page: z
+          .number()
+          .optional()
+          .describe(
+            "Page number, passed through to Rentvine. This endpoint's paging behavior is unverified.",
+          ),
+        page_size: z
+          .number()
+          .optional()
+          .describe(
+            "Results per page, passed through to Rentvine as pageSize. This endpoint's paging behavior is unverified; if unsupported, Rentvine's default page size applies and results may be truncated.",
+          ),
+      },
+    },
+    async (args) => jsonResult(await tools.listTenants(args)),
+  );
+
+  server.registerTool(
     "get_tenant_balance",
     {
       description:

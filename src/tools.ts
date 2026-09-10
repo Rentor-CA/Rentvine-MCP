@@ -481,6 +481,134 @@ export async function getTenantBalance(tenantName: string) {
   return { tenant_name: tenantName, ledger: data };
 }
 
+export interface ListTenantsInput {
+  search?: string;
+  active_only?: boolean;
+  include_sensitive?: boolean;
+  page?: number;
+  page_size?: number;
+}
+
+/**
+ * Identity, contact, and status fields — the working set for tenant workflows.
+ *
+ * Tenants share Rentvine's contact schema with vendors and owners, so the raw
+ * record also carries government-ID, payout/ACH, and vendor-billing fields.
+ * Those are gated behind `include_sensitive` rather than returned by default:
+ * a bare list_tenants call would otherwise put every tenant's date of birth and
+ * bank details into the model's context.
+ */
+function projectTenant(c: Row) {
+  const code = c.code ?? null;
+  return {
+    contact_id: c.contactID,
+    contact_type_id: c.contactTypeID,
+    contact_type: c.contactType,
+    vendor_type_id: c.vendorTypeID,
+    code,
+    code_metadata: parseCodeMetadata(code),
+    name: c.name,
+    first_name: c.firstName,
+    middle_name: c.middleName,
+    last_name: c.lastName,
+    suffix: c.suffix,
+    email: c.email,
+    phone: c.phone,
+    address: c.address,
+    address2: c.address2,
+    city: c.city,
+    state: c.stateID,
+    postal_code: c.postalCode,
+    country: c.countryID,
+    is_active: s(c.isActive) === "1",
+    applicant_id: c.applicantID,
+    website_url: c.websiteUrl,
+    owner_portal_name_override: c.ownerPortalNameOverride,
+    is_from_import: c.isFromImport,
+    import_source_key: c.importSourceKey,
+    date_time_created: c.dateTimeCreated,
+    date_time_modified: c.dateTimeModified,
+    date_time_deactivated: c.dateTimeDeactivated,
+  };
+}
+
+/** Everything else the endpoint returns: PII, financial identity, billing config. */
+function projectTenantSensitive(c: Row) {
+  return {
+    // Personal / government identity
+    birth_date: c.birthDate,
+    identification_type_id: c.identificationTypeID,
+    identification_number: c.identificationNumber,
+    identification_country_id: c.identificationCountryID,
+    identification_issuing_location: c.identificationIssuingLocation,
+    identification_expiration_date: c.identificationExpirationDate,
+    // Tax / payee
+    tax_payer_name: c.taxPayerName,
+    tax_form_type_id: c.taxFormTypeID,
+    payee_name: c.payeeName,
+    has_tax_identifier: c.hasTaxIdentifier,
+    // Payout / banking
+    payout_type_id: c.payoutTypeID,
+    other_payout_type_id: c.otherPayoutTypeID,
+    ach_details_ciphertext_id: c.achDetailsCiphertextID,
+    ach_account_number_truncated: c.achAccountNumberTruncated,
+    ach_account_type_id: c.achAccountTypeID,
+    ach_is_corporate_account: c.achIsCorporateAccount,
+    hold_payments: c.holdPayments,
+    default_bill_charge_account_id: c.defaultBillChargeAccountID,
+    // Shared contact-schema billing config (normally null on tenants)
+    max_line_items_on_payment: c.maxLineItemsOnPayment,
+    prevent_consolidated_payments: c.preventConsolidatedPayments,
+    is_bill_approval_exempt: c.isBillApprovalExempt,
+    is_billing_sales_tax_enabled: c.isBillingSalesTaxEnabled,
+    invoice_autofill_template_id: c.invoiceAutofillTemplateID,
+    is_quickbooks_export_enabled: c.isQuickbooksExportEnabled,
+    quickbooks_customer_name: c.quickbooksCustomerName,
+    discount_percent: c.discountPercent,
+    discount_amount: c.discountAmount,
+    discount_amount_min: c.discountAmountMin,
+    discount_amount_max: c.discountAmountMax,
+    discount_grace_days: c.discountGraceDays,
+    is_insurance_required_for_payment: c.isInsuranceRequiredForPayment,
+    liability_insurance_name: c.liabilityInsuranceName,
+    liability_insurance_policy_number: c.liabilityInsurancePolicyNumber,
+    liability_insurance_expiration: c.liabilityInsuranceExpiresDate,
+    workers_comp_insurance_name: c.workersCompInsuranceName,
+    workers_comp_insurance_policy_number: c.workersCompInsurancePolicyNumber,
+    workers_comp_insurance_expiration: c.workersCompInsuranceExpiresDate,
+  };
+}
+
+export async function listTenants(input: ListTenantsInput = {}) {
+  const params: Record<string, string> = {};
+  if (input.page !== undefined) params.page = String(input.page);
+  if (input.page_size !== undefined) params.pageSize = String(input.page_size);
+
+  const rows = await client.fetchTenants(
+    Object.keys(params).length ? params : undefined,
+  );
+
+  let contacts = rows.map((row) => asObj(row.contact ?? row));
+
+  if (input.active_only) {
+    contacts = contacts.filter((c) => s(c.isActive) === "1");
+  }
+
+  if (input.search) {
+    // Filtered client-side — /tenants exposes no documented search param.
+    const needle = input.search.toLowerCase();
+    contacts = contacts.filter((c) =>
+      `${s(c.name)} ${s(c.email)} ${s(c.phone)}`.toLowerCase().includes(needle),
+    );
+  }
+
+  return contacts.map((c) =>
+    input.include_sensitive
+      ? { ...projectTenant(c), ...projectTenantSensitive(c) }
+      : projectTenant(c),
+  );
+}
+
 export async function listOwners() {
   const rows = await client.fetchOwners();
   return rows.map((row) => {

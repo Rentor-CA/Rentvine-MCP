@@ -135,8 +135,21 @@ export async function fetchUnits(propertyRentvineId: string): Promise<Row[]> {
 /* Contacts                                                            */
 /* ------------------------------------------------------------------ */
 
-export async function fetchTenants(): Promise<Row[]> {
-  return unwrap(await get("/tenants"));
+/**
+ * GET /tenants — returns `[{ contact: {...} }]` using the same shared contact
+ * schema as /vendors/search and /owners/search.
+ *
+ * Note this is `/tenants`, not the `/tenants/search` listed in apiDocs.ts;
+ * `/tenants` is the endpoint confirmed to return data on our account.
+ *
+ * `params` is passed through to the query string. Rentvine's documented
+ * `page`/`pageSize` are accepted here, but this endpoint's paging behavior is
+ * unverified — if it ignores them you get its default page size.
+ */
+export async function fetchTenants(
+  params?: Record<string, string>,
+): Promise<Row[]> {
+  return unwrap(await get("/tenants", params));
 }
 
 export async function fetchOwners(): Promise<Row[]> {

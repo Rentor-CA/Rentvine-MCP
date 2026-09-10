@@ -148,9 +148,16 @@ Used with \`objectID\` + \`objectTypeID\` to identify objects sharing a resource
 
 ### Contacts
 - \`GET /owners/search\` — List owners
-- \`GET /tenants/search\` — List tenants
+- \`GET /tenants\` — List tenants (confirmed working; returns \`[{ contact: {...} }]\`)
+- \`GET /tenants/search\` — List tenants (search variant)
 - \`GET /vendors/search\` — List vendors
+- \`GET /vendors/{contactID}\` — View vendor detail
 - \`GET /associations/search\` — List associations
+
+All contact endpoints share one schema. A tenant record therefore carries
+vendor-oriented fields (insurance, discounts, payout/ACH) that are normally
+null, alongside genuine PII: \`birthDate\`, \`identificationNumber\`,
+\`identificationTypeID\`, and \`achAccountNumberTruncated\`.
 
 ### Portfolios
 - \`GET /portfolios\` — List portfolios
