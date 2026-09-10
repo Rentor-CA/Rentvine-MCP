@@ -1,6 +1,8 @@
 # Rentvine MCP (Rentor fork)
 
-MCP server for [Rentvine](https://rentvine.com) — gives Claude (and any MCP client) live access to your property management data.
+MCP server for [Rentvine](https://rentvine.com) — gives Claude (and any MCP client such as Voice Agents) live access to your property management data.
+
+Rentvine stopped maintaining their MCP Server on Apr 25, 2026 leaving Property Management Companies to fork it and continue maintaing it themselves.
 
 > **Fork notice.** This is Rentor's fork of the upstream [`rentvine-mcp`](https://www.npmjs.com/package/rentvine-mcp) npm package (v1.3.2, MIT, by Base Homes). Upstream is **deprecated on npm and its GitHub repo has been deleted**, so this repo is now the maintained line. TypeScript sources here were reconstructed from the published `dist/` — the original package shipped compiled JS only.
 >
@@ -44,14 +46,25 @@ You'll need your Rentvine API credentials: **Settings → Users, Roles & API**.
 
 ### Build from source
 
+The repo is public, so this needs no GitHub credentials at all:
+
 ```bash
-git clone git@github.com:Rentor-CA/Rentvine-MCP.git
+git clone https://github.com/Rentor-CA/Rentvine-MCP.git
 cd Rentvine-MCP
 npm install
 npm run build
 ```
 
 Requires Node.js 18+.
+
+Use the **HTTPS** URL above on servers. The SSH form
+(`git@github.com:Rentor-CA/Rentvine-MCP.git`) requires an SSH key on the machine
+regardless of whether the repo is public — use it only where you intend to push.
+
+> **Do not set `NODE_ENV=production` for the install.** npm skips
+> devDependencies, TypeScript never installs, and `npm run build` fails with
+> `tsc: not found`. Install normally, build, then set `NODE_ENV` when you run
+> the server. To slim the install afterwards: `npm prune --omit=dev`.
 
 ### Claude Code, Cursor, Windsurf, VS Code, etc.
 
@@ -81,7 +94,7 @@ Config file locations:
 - **VS Code (Copilot)** — `.vscode/mcp.json` in your workspace
 - **Continue** — `~/.continue/config.json`
 
-Restart your client after editing. You should see `rentvine` show up with all 24 tools.
+Restart your client after editing. You should see `rentvine` show up with all 25 tools.
 
 ### Your own MCP host (e.g. a custom agent)
 
@@ -164,6 +177,8 @@ Download the inspection report file [ID].
 ---
 
 ## Development
+
+SSH clone here, since contributors push:
 
 ```bash
 git clone git@github.com:Rentor-CA/Rentvine-MCP.git
