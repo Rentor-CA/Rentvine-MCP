@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#
+# Launcher for the Rentvine MCP HTTP server, one environment per Rentvine
+# account. Copy to start-mcp.sh, fill in the credentials, and keep it out of
+# git — start-mcp.sh is gitignored precisely because it holds secrets.
+#
+#   cp start-mcp.sh.example start-mcp.sh
+#   chmod +x start-mcp.sh
+#   $EDITOR start-mcp.sh
+#
+# Run under pm2:
+#   npx pm2 start ./start-mcp.sh --name rentvine-prod -- prod
+#   npx pm2 start ./start-mcp.sh --name rentvine-dev  -- dev
+#
+set -euo pipefail
+
+# Resolve the server path relative to this script, so it works from any cwd
+# (pm2 does not necessarily run with cwd set to the repo root).
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SERVER="$SCRIPT_DIR/dist/http.js"
+
+case "${1:-}" in
+  prod)
+    export RENTVINE_API_KEY="CHANGE_ME"
+    export RENTVINE_API_SECRET="CHANGE_ME"
+    export RENTVINE_COMPANY="rentor"
+    # Generate with: openssl rand -hex 32
+    export MCP_AUTH_TOKEN="CHANGE_ME"
+    export PORT=18003
+    ;;
+  dev)
+    export RENTVINE_API_KEY="CHANGE_ME"
+    export RENTVINE_API_SECRET="CHANGE_ME"
+    export RENTVINE_COMPANY="zdemopm7-pmidiamondbar"
+    export MCP_AUTH_TOKEN="CHANGE_ME"
+    export PORT=18004
+    ;;
+  *)
+    echo "usage: $0 {prod|dev}" >&2
+    exit 1
+    ;;
+esac
+
+# Bind to loopback only; a reverse proxy terminates TLS and forwards to us.
+export HOST=127.0.0.1
+
+# The server's own MCP_AUTH_TOKEN guard only fires when binding to a
+# NON-loopback address. Because we bind to 127.0.0.1 and put a proxy in front,
+# that guard cannot protect us — an empty token here would publish an
+# unauthenticated endpoint to the internet. So check it explicitly.
+for var in RENTVINE_API_KEY RENTVINE_API_SECRET RENTVINE_COMPANY MCP_AUTH_TOKEN; do
+  value="${!var:-}"
+  if [[ -z "$value" || "$value" == "CHANGE_ME" ]]; then
+    echo "FATAL: $var is unset or still CHANGE_ME in $0 ($1)." >&2
+    echo "       Refusing to start — a public /mcp endpoint without a token is open to anyone." >&2
+    exit 1
+  fi
+done
+
+if [[ ! -f "$SERVER" ]]; then
+  echo "FATAL: $SERVER not found. Run 'npm install && npm run build' first." >&2
+  exit 1
+fi
+
+# exec so pm2 supervises node directly rather than this wrapper shell —
+# without it, pm2 restarts/stops act on the shell and can orphan the server.
+exec node "$SERVER"

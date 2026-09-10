@@ -12,6 +12,14 @@ reference/
 .env.*
 !.env.example
 
+# Deployment launcher — holds live API keys and MCP_AUTH_TOKEN.
+# Template is start-mcp.sh.example; the filled-in copy must never be committed.
+start-mcp.sh
+ecosystem.config.cjs
+
+# pm2 local state
+.pm2/
+
 # Editor / OS
 .DS_Store
 *.swp

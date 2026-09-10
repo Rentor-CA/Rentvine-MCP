@@ -108,29 +108,187 @@ If you're embedding MCP servers in your own app (stdio transport), use the same 
 }
 ```
 
-### ChatGPT (Business / Enterprise / Edu — Developer Mode)
+---
 
-ChatGPT accepts remote MCP servers over HTTPS, so you need to deploy the HTTP variant somewhere the internet can reach. Each deployment is scoped to one Rentvine account (its credentials live in env vars on the server).
+## Hosting it as a shared endpoint (Linux + pm2)
 
-**1. Deploy the HTTP server.** Run `dist/http.js` on any Node 18+ host (Fly.io, Render, Railway, Google Cloud Run, AWS App Runner, Heroku, etc.). Set these env vars on the deployment:
+Run the HTTP transport under pm2 behind a reverse proxy, so any MCP client — Claude, ChatGPT, a voice agent, a teammate's laptop — can point at one URL. One process per Rentvine account.
 
-| Variable | Value |
-|---|---|
-| `RENTVINE_API_KEY` | Your Rentvine API key |
-| `RENTVINE_API_SECRET` | Your Rentvine API secret |
-| `RENTVINE_COMPANY` | Your subdomain |
-| `MCP_AUTH_TOKEN` | A long random string you generate (e.g. `openssl rand -hex 32`) — **required** when binding to any non-loopback interface (the server will refuse to start without it) |
-| `PORT` | Whatever port your host expects (most default to 3000 or 8080) |
-
-Local smoke test:
+### 1. Install on the server
 
 ```bash
-npm install && npm run build
-MCP_AUTH_TOKEN=test RENTVINE_API_KEY=... RENTVINE_API_SECRET=... RENTVINE_COMPANY=... \
-  node dist/http.js
+cd /opt                       # or wherever you keep services
+git clone https://github.com/Rentor-CA/Rentvine-MCP.git
+cd Rentvine-MCP
+npm install                   # do NOT set NODE_ENV=production here
+npm run build
 ```
 
-**2. Add the server in ChatGPT.** An admin must enable Developer Mode in **Workspace Settings → Permissions & Roles → Developer Mode**, then any member can add the connector:
+This runs from the clone. It installs nothing globally, so it won't disturb an
+existing `rentvine-mcp` (the legacy upstream package) already on the box — run
+both on different ports while you migrate.
+
+### 2. Create the launcher
+
+```bash
+cp start-mcp.sh.example start-mcp.sh
+chmod +x start-mcp.sh
+$EDITOR start-mcp.sh          # fill in keys, subdomains, and MCP_AUTH_TOKEN
+```
+
+Generate a token per environment with `openssl rand -hex 32`. `start-mcp.sh` is
+gitignored — it holds live credentials and must never be committed.
+
+The script resolves `dist/http.js` relative to itself, validates that every
+credential is set, and `exec`s node so pm2 supervises the server directly
+instead of a wrapper shell.
+
+### 3. Start under pm2
+
+```bash
+npx pm2 start ./start-mcp.sh --name rentvine-prod -- prod
+npx pm2 start ./start-mcp.sh --name rentvine-dev  -- dev
+
+npx pm2 save                  # persist the process list
+npx pm2 startup               # prints a command to run — restarts pm2 on boot
+```
+
+`pm2 save` plus `pm2 startup` are what make this survive a reboot. Without both,
+the processes are gone after a restart.
+
+```bash
+npx pm2 list                          # status
+npx pm2 logs rentvine-prod            # tail logs
+npx pm2 restart rentvine-prod         # after a git pull + npm run build
+```
+
+To upgrade: `git pull && npm install && npm run build && npx pm2 restart all`.
+
+### 4. Expose it over HTTPS
+
+The Node server listens on `127.0.0.1:18003` — reachable only from the server
+itself, not from the internet. A reverse proxy holds the public port, terminates
+TLS, and forwards to it:
+
+```
+internet ──HTTPS:443──▶ nginx/Caddy ──HTTP──▶ 127.0.0.1:18003 (node)
+          (public)      TLS, certs,           loopback only,
+                        rate limits           unreachable from outside
+```
+
+This is the standard shape: certificates, HTTP/2, and rate limiting live in the
+proxy, and Node never faces raw internet traffic. The endpoint is still fully
+public — the proxy is what makes it so.
+
+**Responses are Server-Sent Events, so proxy buffering must be off** — with
+default buffering the connection appears to hang and clients time out.
+
+<details>
+<summary>nginx</summary>
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name rentvine.example.com;
+
+    # ssl_certificate / ssl_certificate_key — e.g. via certbot
+
+    location /mcp {
+        proxy_pass http://127.0.0.1:18003/mcp;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # SSE: disable buffering or streamed responses stall.
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_set_header Connection '';
+        chunked_transfer_encoding off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+```
+</details>
+
+<details>
+<summary>Caddy</summary>
+
+```caddy
+rentvine.example.com {
+    reverse_proxy /mcp* 127.0.0.1:18003 {
+        flush_interval -1          # disable buffering for SSE
+    }
+}
+```
+</details>
+
+### 5. Verify
+
+```bash
+curl https://rentvine.example.com/health
+# {"ok":true}
+
+curl -X POST https://rentvine.example.com/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}'
+# {"error":"unauthorized"}   ← expected: 401 without a token
+
+curl -X POST https://rentvine.example.com/mcp \
+  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}'
+# event: message
+# data: {"result":{...,"serverInfo":{"name":"rentvine",...}},...}
+```
+
+If the first call returns anything other than 401, **stop** — your endpoint is
+open to the internet. See the warning below.
+
+> ### ⚠️ `MCP_AUTH_TOKEN` is mandatory here
+>
+> The server refuses to start without a token **only when binding to a
+> non-loopback address**. This deployment binds to `127.0.0.1`, which is
+> exempt from that check — so an empty `MCP_AUTH_TOKEN` starts happily and the
+> reverse proxy then publishes an unauthenticated `/mcp` to the world. The
+> built-in guard cannot save you behind a proxy.
+>
+> Anyone reaching that endpoint gets full read/write access to your Rentvine
+> account: tenant PII, ledgers, and the ability to create work orders and bills.
+> `start-mcp.sh.example` refuses to start on an empty or placeholder token for
+> this reason — keep that check.
+>
+> `/health` is intentionally unauthenticated and returns only `{"ok":true}`.
+
+### 6. Point clients at it
+
+```json
+{
+  "mcpServers": {
+    "rentvine": {
+      "type": "http",
+      "url": "https://rentvine.example.com/mcp",
+      "headers": { "Authorization": "Bearer your_mcp_auth_token" }
+    }
+  }
+}
+```
+
+Sessions are held in memory and keyed by the `mcp-session-id` header, so a
+restart drops active sessions and clients must reinitialize. If you ever run
+more than one replica, you need sticky routing on that header.
+
+---
+
+### ChatGPT (Business / Enterprise / Edu — Developer Mode)
+
+ChatGPT accepts remote MCP servers over HTTPS — deploy as above, then:
+
+**Add the server in ChatGPT.** An admin must enable Developer Mode in **Workspace Settings → Permissions & Roles → Developer Mode**, then any member can add the connector:
 
 - ChatGPT → **Settings → Connectors → Advanced → Add custom MCP server**
 - URL: `https://your-deployment.example.com/mcp`
