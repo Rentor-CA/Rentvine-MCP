@@ -109,16 +109,83 @@ npx pm2 save                  # persist the process list
 npx pm2 startup               # prints a command to run — restarts pm2 on boot
 ```
 
-`pm2 save` plus `pm2 startup` are what make this survive a reboot. Without both,
-the processes are gone after a restart.
+The `-- prod` after the script name is what gets passed *to the script* as `$1`,
+selecting the credential block. Everything before `--` is a pm2 flag.
+
+`pm2 save` plus `pm2 startup` are what make this survive a reboot. `save` writes
+the current process list to `~/.pm2/dump.pm2`; `startup` prints a `sudo` command
+you must actually run to install the systemd unit. **Run both, or the processes
+are gone after a restart.** Re-run `pm2 save` any time you add or rename a
+process.
+
+#### pm2 command reference
+
+**Inspect**
 
 ```bash
-npx pm2 list                          # status
-npx pm2 logs rentvine-prod            # tail logs
-npx pm2 restart rentvine-prod         # after a git pull + npm run build
+npx pm2 list                    # status table: name, pid, uptime, restarts, cpu, memory
+npx pm2 describe rentvine-dev   # full details for one process: script path, args, log paths, env
+npx pm2 monit                   # live dashboard (cpu/mem/logs); q to quit
+npx pm2 jlist                   # same as list but JSON — for scripting/monitoring
+npx pm2 prettylist              # JSON, human-formatted
 ```
 
-To upgrade: `git pull && npm install && npm run build && npx pm2 restart all`.
+`describe` is the one to reach for when a process behaves unexpectedly — it
+shows the resolved script path, the `-- prod`/`-- dev` argument it started with,
+its restart count, and where its logs live.
+
+**Logs**
+
+```bash
+npx pm2 logs                          # tail all processes, interleaved
+npx pm2 logs rentvine-prod            # tail one
+npx pm2 logs rentvine-prod --lines 200  # last 200 lines then follow
+npx pm2 logs --err                    # stderr only — startup failures land here
+npx pm2 flush                         # truncate all log files
+```
+
+Logs are written to `~/.pm2/logs/<name>-out.log` and `<name>-error.log`. They
+are not rotated by default; install `pm2-logrotate` to avoid filling the disk:
+
+```bash
+npx pm2 install pm2-logrotate
+```
+
+**Lifecycle**
+
+```bash
+npx pm2 restart rentvine-prod   # restart one
+npx pm2 restart all             # restart everything
+npx pm2 stop rentvine-dev       # stop but keep it in the list
+npx pm2 start rentvine-dev      # start a stopped process by name
+npx pm2 delete rentvine-dev     # remove from pm2 entirely (then pm2 save)
+```
+
+`restart` fully replaces the process, so it re-reads `start-mcp.sh` and picks up
+credential changes. Editing the script alone changes nothing until you restart.
+
+`pm2 reload` (zero-downtime) does **not** help here — it is for clustered Node
+apps, and these are forked shell scripts.
+
+**Persistence**
+
+```bash
+npx pm2 save                    # snapshot current process list
+npx pm2 resurrect               # restore from the snapshot
+npx pm2 startup                 # print the boot-persistence install command
+npx pm2 unstartup               # undo it
+```
+
+**Upgrading to a new version**
+
+```bash
+cd /opt/Rentvine-MCP
+git pull
+npm install
+npm run build
+npx pm2 restart all
+npx pm2 logs --lines 20         # confirm both came back clean
+```
 
 ### 4. Expose it over HTTPS
 
