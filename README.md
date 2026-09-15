@@ -63,13 +63,28 @@ from **Settings → Users, Roles & API**.
 
 ### 1. Clone and build
 
+Install to `/opt/rentvine-mcp`, owned by the user that will run pm2 — **not**
+root:
+
 ```bash
-cd /opt                       # or wherever you keep services
-git clone https://github.com/Rentor-CA/Rentvine-MCP.git
-cd Rentvine-MCP
+sudo mkdir -p /opt/rentvine-mcp
+sudo chown -R "$USER":"$USER" /opt/rentvine-mcp
+
+git clone https://github.com/Rentor-CA/Rentvine-MCP.git /opt/rentvine-mcp
+cd /opt/rentvine-mcp
 npm install                   # do NOT set NODE_ENV=production here
 npm run build
 ```
+
+`/opt` is root-owned by default, so cloning into it as a normal user fails with
+`Permission denied` — hence the `chown`. Don't work around that with
+`sudo git clone`: everything ends up root-owned, and then `git pull`,
+`npm install`, and `npm run build` all need sudo too, while pm2 runs as your
+login user and can't write its own build output. npm also behaves badly as root.
+
+Keep the directory owned by the same user that runs `npx pm2` — `pm2 startup`
+installs a systemd unit bound to one specific user, and `~/.pm2` lives in that
+user's home.
 
 > **Do not set `NODE_ENV=production` for the install.** npm skips
 > devDependencies, TypeScript never installs, and `npm run build` dies with
@@ -179,7 +194,7 @@ npx pm2 unstartup               # undo it
 **Upgrading to a new version**
 
 ```bash
-cd /opt/Rentvine-MCP
+cd /opt/rentvine-mcp
 git pull
 npm install
 npm run build
