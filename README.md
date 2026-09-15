@@ -411,22 +411,107 @@ npm run build          # tsc → dist/
 npm run typecheck      # tsc --noEmit, no output
 ```
 
-Smoke-test the HTTP transport the same way it runs in production:
-
-```bash
-HOST=127.0.0.1 PORT=18009 MCP_AUTH_TOKEN=dev-token \
-RENTVINE_API_KEY=... RENTVINE_API_SECRET=... RENTVINE_COMPANY=... \
-  node dist/http.js
-
-# another shell
-curl -sS localhost:18009/health
-curl -sS -X POST localhost:18009/mcp -H 'Authorization: Bearer dev-token' \
-  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-```
-
 Deploy by pushing, then on the server: `git pull && npm install && npm run build
 && npx pm2 restart all`.
+
+### Testing locally
+
+Nobody *uses* this locally — it's a hosted endpoint. But you should always
+verify changes locally before deploying.
+
+**1. Credentials.** Point at a **dev** Rentvine account, never production:
+`create_work_order`, `create_bill`, `update_work_order`, and `upload_file` write
+to live data with no sandbox.
+
+```bash
+cp .env.example .env
+$EDITOR .env                  # dev key, secret, subdomain
+set -a && source .env && set +a
+```
+
+`.env` is gitignored. There's no dotenv dependency — `set -a` exports
+everything in the file into your shell, which is all the server needs.
+
+**2. Run it**, exactly as production does (loopback, bearer token, port 18009 so
+it can't collide with a deployed instance):
+
+```bash
+npm run build
+node dist/http.js
+# rentvine-mcp HTTP listening on http://127.0.0.1:18009/mcp
+```
+
+For an edit loop, run `npm run dev` (`tsc --watch`) in one shell and restart
+`node dist/http.js` after each rebuild.
+
+**3. Drive it with curl.** Streamable HTTP is session-based: `initialize` first,
+then send the returned `mcp-session-id` header on every later request. A bare
+`tools/list` returns `400 Bad Request: no valid session ID`.
+
+```bash
+MCP=http://127.0.0.1:18009/mcp
+AUTH="Authorization: Bearer $MCP_AUTH_TOKEN"
+JSON="Content-Type: application/json"
+SSE="Accept: application/json, text/event-stream"
+
+# health — no auth, no session
+curl -sS http://127.0.0.1:18009/health
+
+# 1. handshake, capturing the session id from the response headers
+SID=$(curl -sS -D- -o /dev/null -X POST $MCP -H "$AUTH" -H "$JSON" -H "$SSE" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}' \
+  | tr -d '\r' | awk -F': ' '/^mcp-session-id:/{print $2}')
+echo "session: $SID"
+
+# 2. complete the handshake (returns 202)
+curl -sS -X POST $MCP -H "$AUTH" -H "$JSON" -H "$SSE" -H "mcp-session-id: $SID" \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+
+# 3. list tools — responses are SSE, so strip the "data: " prefix for jq
+curl -sS -X POST $MCP -H "$AUTH" -H "$JSON" -H "$SSE" -H "mcp-session-id: $SID" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  | sed -n 's/^data: //p' | jq -r '.result.tools[].name'
+
+# 4. call one
+curl -sS -X POST $MCP -H "$AUTH" -H "$JSON" -H "$SSE" -H "mcp-session-id: $SID" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_properties","arguments":{}}}' \
+  | sed -n 's/^data: //p' | jq -r '.result.content[0].text'
+```
+
+Step 3 should print 25 tool names. Step 4 returns the tool's JSON payload, or a
+`Rentvine 4xx …` string if the credentials are wrong — which still proves the
+transport, routing, and projection path all work.
+
+**4. Or point a real client at it.** Same config as production, just localhost:
+
+```json
+{
+  "mcpServers": {
+    "rentvine-local": {
+      "type": "http",
+      "url": "http://127.0.0.1:18009/mcp",
+      "headers": { "Authorization": "Bearer dev-token" }
+    }
+  }
+}
+```
+
+This is the fastest way to test tool *descriptions* — whether the model picks
+the right tool and fills arguments correctly is not something curl can tell you.
+
+**5. Quick checks without a server.** `dist/index.js` is the stdio transport;
+it speaks JSON-RPC on stdin/stdout with no session handshake, which makes it
+handy for scripted assertions:
+
+```bash
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  | node dist/index.js | tail -1 | jq '.result.tools | length'
+```
+
+Run `npm run typecheck` before pushing.
 
 ### Layout
 
