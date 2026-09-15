@@ -444,9 +444,30 @@ node dist/http.js
 For an edit loop, run `npm run dev` (`tsc --watch`) in one shell and restart
 `node dist/http.js` after each rebuild.
 
-**3. Drive it with curl.** Streamable HTTP is session-based: `initialize` first,
-then send the returned `mcp-session-id` header on every later request. A bare
-`tools/list` returns `400 Bad Request: no valid session ID`.
+**3. Drive it with `scripts/mcp-test.sh`.** It reads `.env`, does the handshake,
+and calls a tool — one command instead of four:
+
+```bash
+./scripts/mcp-test.sh                                   # list all 25 tool names
+./scripts/mcp-test.sh list_properties                   # call a tool
+./scripts/mcp-test.sh list_tenants '{"search":"aaron"}'  # with arguments
+./scripts/mcp-test.sh list_work_orders | jq '.[0]'      # pipe to jq
+./scripts/mcp-test.sh --raw                             # full tools/list JSON
+```
+
+It fails loudly if the server isn't running or the token doesn't match, which
+covers the two things that actually go wrong.
+
+<details>
+<summary>Or by hand with curl</summary>
+
+Streamable HTTP is session-based: `initialize` first, then send the returned
+`mcp-session-id` header on every later request. A bare `tools/list` returns
+`400 Bad Request: no valid session ID`.
+
+`$MCP_AUTH_TOKEN` must be exported in your shell — `set -a && source .env && set +a`.
+If it's empty the header becomes `Authorization: Bearer ` and every call returns
+`{"error":"unauthorized"}`.
 
 ```bash
 MCP=http://127.0.0.1:18009/mcp
@@ -481,6 +502,8 @@ curl -sS -X POST $MCP -H "$AUTH" -H "$JSON" -H "$SSE" -H "mcp-session-id: $SID" 
 Step 3 should print 25 tool names. Step 4 returns the tool's JSON payload, or a
 `Rentvine 4xx …` string if the credentials are wrong — which still proves the
 transport, routing, and projection path all work.
+
+</details>
 
 **4. Or point a real client at it.** Same config as production, just localhost:
 
