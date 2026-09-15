@@ -505,7 +505,36 @@ transport, routing, and projection path all work.
 
 </details>
 
-**4. Or point a real client at it.** Same config as production, just localhost:
+**4. Or use the official MCP Inspector.** Standard tooling, no repo checkout
+needed — works against localhost or the deployed endpoint:
+
+```bash
+export TOKEN=your_mcp_auth_token
+URL=http://127.0.0.1:18009/mcp        # or https://your-host.example.com:8003/mcp
+
+# list tools
+npx @modelcontextprotocol/inspector --cli $URL \
+  --header "Authorization: Bearer $TOKEN" --method tools/list
+
+# call one, with arguments
+npx @modelcontextprotocol/inspector --cli $URL \
+  --header "Authorization: Bearer $TOKEN" \
+  --method tools/call --tool-name list_tenants --tool-arg page_size=100
+
+# read the API-docs resource
+npx @modelcontextprotocol/inspector --cli $URL \
+  --header "Authorization: Bearer $TOKEN" \
+  --method resources/read --uri rentvine://api-docs
+```
+
+It also has `--tui` (interactive terminal browser) and `--web` (browser UI, good
+for clicking through tools and inspecting raw JSON-RPC). The transport is
+auto-detected from the URL — `/mcp` means Streamable HTTP.
+
+`scripts/mcp-test.sh` stays useful for scripted checks: no npx download, and it
+reads `.env` so there's no token to pass.
+
+**5. Or point a real client at it.** Same config as production, just localhost:
 
 ```json
 {
@@ -522,7 +551,7 @@ transport, routing, and projection path all work.
 This is the fastest way to test tool *descriptions* — whether the model picks
 the right tool and fills arguments correctly is not something curl can tell you.
 
-**5. Quick checks without a server.** `dist/index.js` is the stdio transport;
+**6. Quick checks without a server.** `dist/index.js` is the stdio transport;
 it speaks JSON-RPC on stdin/stdout with no session handshake, which makes it
 handy for scripted assertions:
 
