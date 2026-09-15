@@ -1,5 +1,7 @@
 # Rentvine MCP (Rentor fork)
 
+https://server.rentor.com:8011/s/vps/p/rentvine-mcp-cyTjzZb7Dv
+
 MCP server for [Rentvine](https://rentvine.com) — gives Claude (and any MCP client such as Voice Agents) live access to your property management data.
 
 Rentvine stopped maintaining their MCP Server on Apr 25, 2026 leaving Property Management Companies to fork it and continue maintaing it themselves.
