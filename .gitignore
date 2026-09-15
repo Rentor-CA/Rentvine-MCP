@@ -24,3 +24,4 @@ ecosystem.config.cjs
 .DS_Store
 *.swp
 .idea/
+build/

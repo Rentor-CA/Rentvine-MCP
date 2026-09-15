@@ -18,6 +18,7 @@
     "rebuild": "npm run clean && npm run build",
     "typecheck": "tsc --noEmit",
     "dev": "tsc --watch",
+    "package": "bash scripts/package.sh",
     "start": "node dist/index.js",
     "start:http": "node dist/http.js"
   },

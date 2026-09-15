@@ -61,7 +61,39 @@ Run **one process per Rentvine account**, each on its own port:
 certificate for your host (certbot is fine). Plus your Rentvine API credentials
 from **Settings → Users, Roles & API**.
 
-### 1. Clone and build
+### 1. Get the code onto the server
+
+**Option A — servers with no git/npm access (zip upload).** Build a
+self-contained zip on your laptop, upload it, unzip it. No build step, no
+`npm install`, and no network needed on the server:
+
+```bash
+# on your laptop, in the repo
+npm run package
+# -> build/rentvine-mcp-<version>-<sha>.zip   (~6 MB)
+```
+
+The zip contains `dist/`, `node_modules/` (production deps only),
+`package.json`, `start-mcp.sh.example`, and a `DEPLOY.txt` with these same
+steps. Upload it however you like (`scp`, or any file host + `curl -LOJ`), then:
+
+```bash
+sudo mkdir -p /opt/rentvine-mcp
+sudo chown -R "$USER":"$USER" /opt/rentvine-mcp
+
+unzip -o rentvine-mcp-*.zip -d /tmp
+cp -r /tmp/rentvine-mcp/. /opt/rentvine-mcp/
+cd /opt/rentvine-mcp
+```
+
+**Re-run `npm run package` after every change** and repeat the upload — the
+server has no way to rebuild. The filename carries the version and git SHA
+(plus `-dirty` for uncommitted changes) so you can tell what's deployed.
+
+Requires Node.js 18+ on the server. Nothing else.
+
+<details>
+<summary><b>Option B</b> — servers with git and npm access (clone and build)</summary>
 
 Install to `/opt/rentvine-mcp`, owned by the user that will run pm2 — **not**
 root:
@@ -98,6 +130,12 @@ repo visibility, so save it for boxes where you intend to push.
 This runs from the clone and installs nothing globally, so it won't disturb an
 existing `rentvine-mcp` (the legacy upstream package) already on the box — run
 both on different ports while you migrate, then retire the old one.
+
+</details>
+
+Either way, the legacy `rentvine-mcp` already on the box is untouched — give the
+new instance its own port (e.g. `18005` internal / `8005` public) and run both
+until you cut over.
 
 ### 2. Create the launcher
 
