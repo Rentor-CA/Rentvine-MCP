@@ -34,9 +34,23 @@ export const WRITE_TOOLS: ReadonlySet<string> = new Set([
 
 export type ToolSet = "all" | "read" | "write";
 
+/**
+ * Who a call is for, as an agent platform reports it (the x-rentor-user and
+ * x-rentor-bot headers on /mcp/read and /mcp/write). For the log only —
+ * attribution, not access control: any client holding the token could set it.
+ */
+export interface RequestedBy {
+  user: string | null;
+  bot: string | null;
+}
+
 export interface ServerOptions {
   /** Which tools to expose (default "all"). */
   tools?: ToolSet;
+  /** Which endpoint serves it (for the log). */
+  endpoint?: string;
+  /** Who the calls are for (for the log). */
+  requestedBy?: RequestedBy;
   /**
    * Let `upload_file` read a file from THIS machine's disk (`file_path`).
    * Right for stdio (the server runs on the user's own machine); off by
@@ -46,13 +60,40 @@ export interface ServerOptions {
   allowLocalFiles?: boolean;
 }
 
-/** Registers only the tools in the chosen set (the others are removed as they're added). */
-function limitTools(server: McpServer, set: ToolSet): void {
-  if (set === "all") return;
+/**
+ * As tools are registered: keep only the chosen set (the others are removed),
+ * and log every call — one JSON line on stdout with the tool, who it was for,
+ * whether it worked and how long it took. Never the arguments or the result
+ * (tenant data).
+ */
+function prepareTools(server: McpServer, options: ServerOptions): void {
+  const set = options.tools ?? "all";
   const register = server.registerTool.bind(server) as McpServer["registerTool"];
-  server.registerTool = ((name: string, config: never, cb: never) => {
-    const tool = register(name, config, cb);
-    if (WRITE_TOOLS.has(name) !== (set === "write")) tool.remove();
+  server.registerTool = ((name: string, config: never, cb: (...args: unknown[]) => Promise<CallToolResult>) => {
+    const logged = async (...args: unknown[]) => {
+      const started = Date.now();
+      let ok = false;
+      try {
+        const result = await cb(...args);
+        ok = !result?.isError;
+        return result;
+      } finally {
+        console.log(
+          JSON.stringify({
+            at: new Date().toISOString(),
+            event: "tool_call",
+            endpoint: options.endpoint ?? null,
+            tool: name,
+            user: options.requestedBy?.user ?? null,
+            bot: options.requestedBy?.bot ?? null,
+            ok,
+            ms: Date.now() - started,
+          }),
+        );
+      }
+    };
+    const tool = register(name, config, logged as never);
+    if (set !== "all" && WRITE_TOOLS.has(name) !== (set === "write")) tool.remove();
     return tool;
   }) as McpServer["registerTool"];
 }
@@ -69,7 +110,7 @@ export function createServer(options: ServerOptions = {}): McpServer {
     name: SERVER_NAME,
     version: SERVER_VERSION,
   });
-  limitTools(server, options.tools ?? "all");
+  prepareTools(server, options);
 
   /* ---------------------------------------------------------------- */
   /* Properties / units                                                */

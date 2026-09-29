@@ -384,11 +384,19 @@ only that path's tools, so there are no sessions to lose on a restart and any
 replica can answer. `/mcp` keeps in-memory sessions as before; an unknown or
 ended session there now gets `404` (the MCP spec's cue to start a new session).
 
-**`upload_file` over HTTP** takes the file as `file_content_base64` +
-`file_name`. Its `file_path` option (read a file from the server's own disk) is
-available over stdio, where the server runs on your machine, but off over HTTP
-unless `RENTVINE_ALLOW_FILE_PATH=1` — otherwise a caller could make the server
-upload any file it can read, its own credentials included.
+**`upload_file`'s `file_path`** reads a file from the *server's* disk. Over
+stdio that's your machine; over HTTP it's the server, so a caller could upload
+any file the server can read — its own credentials included. `/mcp` keeps it as
+before (set `RENTVINE_ALLOW_FILE_PATH=0` to turn it off — recommended once no
+client relies on it); `/mcp/read` and `/mcp/write` never offer it (send
+`file_content_base64` + `file_name`).
+
+**Who a call is for.** On `/mcp/read` and `/mcp/write` an agent platform can
+send `x-rentor-user` (the person's email) and `x-rentor-bot` (the bot). Every
+tool call — on any endpoint — writes one JSON line to stdout:
+`{"event":"tool_call","endpoint":"/mcp/write","tool":"create_work_order","user":"…","bot":"…","ok":true,"ms":412}`
+— never the arguments or the result. The headers are attribution, not access
+control: any client holding the token could set them.
 
 **Claude Code / Claude Desktop / Cursor / Windsurf / VS Code**
 
@@ -447,7 +455,7 @@ bearer header.
 | `MCP_AUTH_TOKEN` | Bearer token clients must present on `/mcp`. Generate with `openssl rand -hex 32`. **Always set this.** The server only *enforces* it at startup when `HOST` is non-loopback — behind nginx that check never fires, so an empty value publishes an open endpoint. |
 | `PORT` | HTTP server port (default: `3000`). Use `18003` / `18004` per the table above. |
 | `HOST` | Bind address (default: `0.0.0.0`). Set `127.0.0.1` so only nginx can reach it. |
-| `RENTVINE_ALLOW_FILE_PATH` | `1` lets `upload_file` read `file_path` from the server's disk over HTTP. Default off (stdio always allows it). Only for a server on the same machine as the files it uploads. |
+| `RENTVINE_ALLOW_FILE_PATH` | `0` turns off `upload_file`'s `file_path` on `/mcp` (reads the server's own disk). Default: on, as before. `/mcp/read` and `/mcp/write` never offer it; stdio always does. |
 
 All of these are set in `start-mcp.sh`, one block per environment.
 
