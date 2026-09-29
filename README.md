@@ -379,8 +379,10 @@ the same token on two narrower paths:
 
 A client that should never change data connects to `/mcp/read` only; an agent
 platform can connect to both and require a person's approval for every call on
-`/mcp/write`. Each path keeps its own sessions, so a session opened on
-`/mcp/read` can't call a write tool.
+`/mcp/write`. Both are **stateless**: each request gets its own server holding
+only that path's tools, so there are no sessions to lose on a restart and any
+replica can answer. `/mcp` keeps in-memory sessions as before; an unknown or
+ended session there now gets `404` (the MCP spec's cue to start a new session).
 
 **`upload_file` over HTTP** takes the file as `file_content_base64` +
 `file_name`. Its `file_path` option (read a file from the server's own disk) is

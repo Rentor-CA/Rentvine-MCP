@@ -6,13 +6,16 @@
  * process is stateful and does not horizontally scale without sticky routing.
  *
  * Three endpoints, same token:
- *   /mcp        every tool (as before)
+ *   /mcp        every tool (as before; sessions in memory)
  *   /mcp/read   only tools that read — nothing changes in Rentvine
  *   /mcp/write  only tools that change live data (create/update work order,
  *               create bill, upload file) — a client can put all of these
  *               behind a person's approval by connecting here with it
- * Each endpoint keeps its own sessions: a session opened on /mcp/read can't
- * be used to call the write tools.
+ * /mcp/read and /mcp/write are stateless: every request gets its own server
+ * with only that path's tools, so there's no session to lose when the process
+ * restarts (clients keep working) and any replica can answer. On /mcp an
+ * unknown session ID gets 404 (the MCP spec's signal to start a new session),
+ * and an initialize request always starts one — also with an old session ID.
  *
  * `upload_file` never reads this server's disk (`file_path`) unless
  * RENTVINE_ALLOW_FILE_PATH=1 — over HTTP the caller's files aren't here, and
@@ -63,7 +66,7 @@ function mountMcp(path: string, tools: ToolSet): void {
 
     if (sessionId && transports[sessionId]) {
       transport = transports[sessionId];
-    } else if (!sessionId && isInitializeRequest(req.body)) {
+    } else if (isInitializeRequest(req.body)) {
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (id: string) => {
@@ -75,6 +78,14 @@ function mountMcp(path: string, tools: ToolSet): void {
       };
       const server = createServer({ tools, allowLocalFiles: ALLOW_FILE_PATH });
       await server.connect(transport);
+    } else if (sessionId) {
+      // Unknown or ended (e.g. the server restarted): the client starts a new session.
+      res.status(404).json({
+        jsonrpc: "2.0",
+        error: { code: -32001, message: "Session not found" },
+        id: null,
+      });
+      return;
     } else {
       res.status(400).json({
         jsonrpc: "2.0",
@@ -89,8 +100,12 @@ function mountMcp(path: string, tools: ToolSet): void {
 
   async function handleSessionRequest(req: Request, res: Response): Promise<void> {
     const sessionId = req.header("mcp-session-id");
-    if (!sessionId || !transports[sessionId]) {
-      res.status(400).send("Invalid or missing session ID");
+    if (!sessionId) {
+      res.status(400).send("Missing session ID");
+      return;
+    }
+    if (!transports[sessionId]) {
+      res.status(404).send("Session not found");
       return;
     }
     await transports[sessionId].handleRequest(req, res);
@@ -100,9 +115,33 @@ function mountMcp(path: string, tools: ToolSet): void {
   app.delete(path, requireAuth, handleSessionRequest);
 }
 
+/** A stateless endpoint: one server and transport per request, nothing kept between requests. */
+function mountStatelessMcp(path: string, tools: ToolSet): void {
+  app.post(path, requireAuth, async (req: Request, res: Response) => {
+    const server = createServer({ tools, allowLocalFiles: ALLOW_FILE_PATH });
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on("close", () => {
+      void transport.close();
+      void server.close();
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  });
+  // No sessions, so no event stream to open and nothing to end.
+  const notAllowed = (_req: Request, res: Response): void => {
+    res.status(405).set("Allow", "POST").json({
+      jsonrpc: "2.0",
+      error: { code: -32000, message: "Method not allowed" },
+      id: null,
+    });
+  };
+  app.get(path, requireAuth, notAllowed);
+  app.delete(path, requireAuth, notAllowed);
+}
+
 mountMcp("/mcp", "all");
-mountMcp("/mcp/read", "read");
-mountMcp("/mcp/write", "write");
+mountStatelessMcp("/mcp/read", "read");
+mountStatelessMcp("/mcp/write", "write");
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
 if (!AUTH_TOKEN && !LOOPBACK.has(HOST)) {
