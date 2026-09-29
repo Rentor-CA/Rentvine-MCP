@@ -438,10 +438,15 @@ Plus or Free.
 Any MCP client supporting Streamable HTTP works — point it at the URL with the
 bearer header.
 
-> Sessions live in memory, keyed by the `mcp-session-id` header. A `pm2 restart`
-> drops active sessions and clients reinitialize on their next call. If you ever
-> run more than one replica behind the proxy, you need sticky routing on that
-> header.
+> **Sessions apply to `/mcp` only.** They live in memory, keyed by the
+> `mcp-session-id` header, so a `pm2 restart` ends them. The server then answers
+> **404**, which is the MCP spec's cue for a client to start a new session — but
+> not every client acts on it. One agent platform kept replaying the dead ID and
+> lost every Rentvine tool until it was itself restarted. `/mcp/read` and
+> `/mcp/write` are stateless, so there is nothing to lose on a restart; prefer
+> them for agent platforms. Likewise, running more than one replica behind the
+> proxy needs sticky routing on that header for `/mcp` — the stateless endpoints
+> need none.
 
 ---
 
@@ -459,11 +464,20 @@ bearer header.
 
 All of these are set in `start-mcp.sh`, one block per environment.
 
-### Docker
+---
+
+## Docker (optional — not how we deploy this)
+
+> **This is not our deployment path.** Rentor runs this under **pm2 behind
+> nginx**, as described in [Install](#install) — that is the supported setup, the
+> one every other section assumes, and the one to use. The `Dockerfile` is an
+> unsupported convenience for running the server somewhere else. Nothing in our
+> deployment builds it or depends on it, and you never need Docker to install,
+> run, or develop this server.
 
 ```bash
 docker build -t rentvine-mcp .
-docker run --rm -p 127.0.0.1:18009:3000 \
+docker run --rm --init -p 127.0.0.1:18009:3000 \
   -e RENTVINE_API_KEY -e RENTVINE_API_SECRET -e RENTVINE_COMPANY -e MCP_AUTH_TOKEN \
   rentvine-mcp
 ```
@@ -472,9 +486,51 @@ The image runs `dist/http.js` as the unprivileged `node` user on `0.0.0.0:3000`
 (so `MCP_AUTH_TOKEN` is required — it refuses to start without one) with a
 `/health` check. Put TLS in front of it as for pm2.
 
+Nothing is pinned inside the image: `PORT` and `HOST` are defaults, so
+`-e PORT=18009` moves the listener and the healthcheck follows it. `EXPOSE 3000`
+is only metadata — publish whatever you want with `-p`.
+
+Use `--init` as shown. The server registers no SIGTERM handler, so as PID 1 it
+ignores the signal and `docker stop` waits the full grace period before killing
+it (10s, exit 137); `--init` supplies a real init and it stops in 1s.
+
 ---
 
 ## Testing
+
+```bash
+npm test          # scripts/test-endpoints.sh
+```
+
+35 checks over auth, the three endpoints, which tools each exposes, session
+handling, ID validation, and the call log. It builds if needed, starts its own
+server on port 18099 with fake credentials, and stops it again — so it needs no
+`.env`, reaches no Rentvine account, and touches no live data. Run it before
+opening a PR.
+
+For a quick look at a *running* server against a real account, use
+[`scripts/mcp-test.sh`](scripts/mcp-test.sh) (handshake plus one tool call) or
+[`scripts/test.sh`](scripts/test.sh) (the same through the MCP Inspector CLI).
+Both read credentials from `.env`.
+
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull
+request and on pushes to `main`: typecheck, build, the 35 endpoint tests, and a
+scan for credential-shaped literals in tracked files. It needs no secrets — the
+test suite supplies its own fake ones.
+
+**A red run does not block merging on its own.** GitHub reports the failure and
+still offers the merge button until `test` is a *required status check*. Set it
+once, after the first run has appeared:
+
+> **Settings → Branches → Add branch ruleset** (or *Add rule* on older repos)
+> → target `main` → tick **Require status checks to pass before merging** →
+> search `test` and select it → also tick **Require a pull request before
+> merging** so the check cannot be bypassed by pushing straight to `main`.
+
+The check only appears in that search once it has run at least once, so open the
+CI PR first, then add the rule.
 
 After install, ask Claude things like:
 

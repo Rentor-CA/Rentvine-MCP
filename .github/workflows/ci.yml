@@ -1,0 +1,59 @@
+name: CI
+
+# Runs on every PR and on main. To make a red run actually block merging, the
+# "test" job has to be a *required status check* — see "Continuous integration"
+# in the README. Without that, GitHub reports the failure but still lets you
+# merge.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push supersedes the run still going for the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # --ignore-scripts: no dependency lifecycle script runs here, same as the
+      # Dockerfile. The build below is invoked explicitly.
+      - run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      # scripts/test-endpoints.sh — 35 checks. Starts its own server on 18099
+      # with fake credentials, so no secrets are needed and no Rentvine account
+      # is touched. jq and curl are preinstalled on ubuntu-latest.
+      - name: Endpoint tests
+        run: npm test
+
+      # A hardcoded credential must never land on main again: this repo is
+      # public, and anything committed stays in history even after it is
+      # deleted. Catches a 32+ char hex string assigned in a tracked file, which
+      # is what an MCP_AUTH_TOKEN or a Rentvine key looks like.
+      - name: No hardcoded secrets
+        run: |
+          if git grep -nIE '(TOKEN|SECRET|KEY|PASSWORD)[A-Z_]*=[A-Za-z0-9/+]{32,}' \
+               -- . ':!package-lock.json' ':!.github/workflows/ci.yml'; then
+            echo "::error::A credential-shaped literal is committed. Move it to .env."
+            exit 1
+          fi
+          echo "none found"
