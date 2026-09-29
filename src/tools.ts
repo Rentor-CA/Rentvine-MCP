@@ -1035,10 +1035,14 @@ export async function downloadFile(input: FileInput) {
   };
 }
 
-export async function uploadFile(input: UploadFileInput) {
+export async function uploadFile(input: UploadFileInput, opts: { allowLocalFiles?: boolean } = {}) {
   let buffer: Buffer;
   let fileName: string;
 
+  if (input.file_path && !opts.allowLocalFiles) {
+    // Over HTTP the server's disk isn't the caller's: reading it would expose the server's own files.
+    throw new Error("file_path isn't available on this server — pass file_content_base64 and file_name instead.");
+  }
   if (input.file_path) {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");

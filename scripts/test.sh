@@ -1,40 +1,33 @@
 #!/usr/bin/env bash
 #
-# Smoke test via the MCP Inspector CLI. Reads credentials from .env.
+# Quick checks with the MCP Inspector CLI against a running HTTP server.
+# The token comes from .env (gitignored) — never write it into this file:
+# it is committed, and this repo is public.
 #
-#   ./scripts/test.sh                            # test the local server
-#   URL=https://server.rentor.com:8003/mcp ./scripts/test.sh
-#
-# Credentials come from .env (gitignored). Never hardcode them in this file —
-# it is committed.
+#   ./scripts/test.sh                                   # the local server (.env's HOST/PORT)
+#   URL=https://<host>/mcp ./scripts/test.sh            # another one (same token variable)
 #
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$REPO_ROOT/.env"
-
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "FATAL: $ENV_FILE not found. Run: cp .env.example .env && \$EDITOR .env" >&2
-  exit 1
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
 fi
 
-# Export everything in .env into this script's environment.
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
-
-: "${MCP_AUTH_TOKEN:?not set in .env}"
-TOKEN="$MCP_AUTH_TOKEN"
+: "${MCP_AUTH_TOKEN:?not set — put it in .env}"
 URL="${URL:-http://${HOST:-127.0.0.1}:${PORT:-18009}/mcp}"
 
 npx @modelcontextprotocol/inspector --cli "$URL" \
-  --header "Authorization: Bearer $TOKEN" --method tools/list
+  --header "Authorization: Bearer $MCP_AUTH_TOKEN" --method tools/list
 
 npx @modelcontextprotocol/inspector --cli "$URL" \
-  --header "Authorization: Bearer $TOKEN" \
+  --header "Authorization: Bearer $MCP_AUTH_TOKEN" \
   --method tools/call --tool-name list_tenants --tool-arg page_size=100
 
 npx @modelcontextprotocol/inspector --cli "$URL" \
-  --header "Authorization: Bearer $TOKEN" \
+  --header "Authorization: Bearer $MCP_AUTH_TOKEN" \
   --method resources/read --uri rentvine://api-docs

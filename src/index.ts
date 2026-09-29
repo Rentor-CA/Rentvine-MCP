@@ -10,7 +10,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createServer } from "./createServer.js";
 
 async function main(): Promise<void> {
-  const server = createServer();
+  // A subprocess on the user's own machine: file_path reads their own files.
+  const server = createServer({ allowLocalFiles: true });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
