@@ -62,9 +62,13 @@ export interface ServerOptions {
 
 /**
  * As tools are registered: keep only the chosen set (the others are removed),
- * and log every call — one JSON line on stdout with the tool, who it was for,
+ * and log every call — one JSON line on stderr with the tool, who it was for,
  * whether it worked and how long it took. Never the arguments or the result
  * (tenant data).
+ *
+ * stderr, not stdout: over stdio the protocol itself runs on stdout, so a log
+ * line there lands in the middle of the JSON-RPC stream the client is parsing.
+ * pm2 and Docker capture stderr just the same.
  */
 function prepareTools(server: McpServer, options: ServerOptions): void {
   const set = options.tools ?? "all";
@@ -78,7 +82,7 @@ function prepareTools(server: McpServer, options: ServerOptions): void {
         ok = !result?.isError;
         return result;
       } finally {
-        console.log(
+        console.error(
           JSON.stringify({
             at: new Date().toISOString(),
             event: "tool_call",

@@ -17,6 +17,7 @@
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
     "typecheck": "tsc --noEmit",
+    "test": "bash scripts/test-endpoints.sh",
     "dev": "tsc --watch",
     "package": "bash scripts/package.sh",
     "start": "node dist/index.js",
