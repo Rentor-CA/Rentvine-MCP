@@ -7,6 +7,11 @@
  *
  * Both transports (stdio in index.ts, HTTP in http.ts) call createServer() —
  * the transport is the only difference between them.
+ *
+ * `tools` picks which tools a server exposes: "read" (nothing changes in
+ * Rentvine), "write" (the tools that change live data), or "all". The HTTP
+ * entrypoint serves each on its own path, so a client can connect to the read
+ * tools freely and put every write behind a person's approval.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -19,17 +24,52 @@ import { RENTVINE_API_DOCS } from "./apiDocs.js";
 const SERVER_NAME = "rentvine";
 const SERVER_VERSION = "1.2.0";
 
+/** The tools that change live Rentvine data. Everything else only reads. */
+export const WRITE_TOOLS: ReadonlySet<string> = new Set([
+  "create_work_order",
+  "update_work_order",
+  "create_bill",
+  "upload_file",
+]);
+
+export type ToolSet = "all" | "read" | "write";
+
+export interface ServerOptions {
+  /** Which tools to expose (default "all"). */
+  tools?: ToolSet;
+  /**
+   * Let `upload_file` read a file from THIS machine's disk (`file_path`).
+   * Right for stdio (the server runs on the user's own machine); off by
+   * default over HTTP, where it would let a caller read any file the server
+   * can — its own credentials included.
+   */
+  allowLocalFiles?: boolean;
+}
+
+/** Registers only the tools in the chosen set (the others are removed as they're added). */
+function limitTools(server: McpServer, set: ToolSet): void {
+  if (set === "all") return;
+  const register = server.registerTool.bind(server) as McpServer["registerTool"];
+  server.registerTool = ((name: string, config: never, cb: never) => {
+    const tool = register(name, config, cb);
+    if (WRITE_TOOLS.has(name) !== (set === "write")) tool.remove();
+    return tool;
+  }) as McpServer["registerTool"];
+}
+
 function jsonResult(data: unknown): CallToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
   };
 }
 
-export function createServer(): McpServer {
+export function createServer(options: ServerOptions = {}): McpServer {
+  const allowLocalFiles = options.allowLocalFiles ?? false;
   const server = new McpServer({
     name: SERVER_NAME,
     version: SERVER_VERSION,
   });
+  limitTools(server, options.tools ?? "all");
 
   /* ---------------------------------------------------------------- */
   /* Properties / units                                                */
@@ -448,19 +488,27 @@ export function createServer(): McpServer {
   server.registerTool(
     "upload_file",
     {
-      description:
-        "Upload a file to Rentvine and optionally attach it to a work order, property, lease, or unit (live data, write). " +
-        "ALWAYS use file_path when the file exists on disk — pass the absolute path and the server reads it directly. " +
-        "NEVER use file_content_base64 for local files; it is extremely slow and fills the context window. " +
-        "file_content_base64 exists only for remote/HTTP deployments with no shared filesystem. " +
-        "Use list_object_types to get valid object_type_id values.",
+      description: allowLocalFiles
+        ? "Upload a file to Rentvine and optionally attach it to a work order, property, lease, or unit (live data, write). " +
+          "ALWAYS use file_path when the file exists on disk — pass the absolute path and the server reads it directly. " +
+          "NEVER use file_content_base64 for local files; it is extremely slow and fills the context window. " +
+          "file_content_base64 exists only for remote/HTTP deployments with no shared filesystem. " +
+          "Use list_object_types to get valid object_type_id values."
+        : "Upload a file to Rentvine and optionally attach it to a work order, property, lease, or unit (live data, write). " +
+          "Pass the file as file_content_base64 with a file_name (up to ~2MB). " +
+          "Use list_object_types to get valid object_type_id values.",
       inputSchema: {
-        file_path: z
-          .string()
-          .optional()
-          .describe(
-            "Absolute path to the file on disk (e.g. '/Users/you/Downloads/invoice.pdf'). USE THIS for any file you can reference by path. The server reads it directly — no encoding needed.",
-          ),
+        // Only where the server runs on the caller's own machine (see ServerOptions).
+        ...(allowLocalFiles
+          ? {
+              file_path: z
+                .string()
+                .optional()
+                .describe(
+                  "Absolute path to the file on disk (e.g. '/Users/you/Downloads/invoice.pdf'). USE THIS for any file you can reference by path. The server reads it directly — no encoding needed.",
+                ),
+            }
+          : {}),
         object_type_id: z
           .number()
           .optional()
@@ -485,7 +533,7 @@ export function createServer(): McpServer {
           ),
       },
     },
-    async (args) => jsonResult(await tools.uploadFile(args)),
+    async (args) => jsonResult(await tools.uploadFile(args, { allowLocalFiles })),
   );
 
   server.registerTool(

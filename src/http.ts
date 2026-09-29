@@ -5,6 +5,19 @@
  * Sessions are held in-memory, keyed by the `mcp-session-id` header, so this
  * process is stateful and does not horizontally scale without sticky routing.
  *
+ * Three endpoints, same token:
+ *   /mcp        every tool (as before)
+ *   /mcp/read   only tools that read — nothing changes in Rentvine
+ *   /mcp/write  only tools that change live data (create/update work order,
+ *               create bill, upload file) — a client can put all of these
+ *               behind a person's approval by connecting here with it
+ * Each endpoint keeps its own sessions: a session opened on /mcp/read can't
+ * be used to call the write tools.
+ *
+ * `upload_file` never reads this server's disk (`file_path`) unless
+ * RENTVINE_ALLOW_FILE_PATH=1 — over HTTP the caller's files aren't here, and
+ * the server's own files (its credentials included) must not be readable.
+ *
  * For the stdio transport, see index.ts.
  */
 
@@ -13,11 +26,12 @@ import express, { type Request, type Response, type NextFunction } from "express
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
-import { createServer } from "./createServer.js";
+import { createServer, type ToolSet } from "./createServer.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = process.env.HOST ?? "0.0.0.0";
 const AUTH_TOKEN = process.env.MCP_AUTH_TOKEN;
+const ALLOW_FILE_PATH = process.env.RENTVINE_ALLOW_FILE_PATH === "1";
 
 const app = express();
 app.use(express.json({ limit: "4mb" }));
@@ -39,49 +53,56 @@ app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-const transports: Record<string, StreamableHTTPServerTransport> = {};
+/** One MCP endpoint serving one set of tools, with its own sessions. */
+function mountMcp(path: string, tools: ToolSet): void {
+  const transports: Record<string, StreamableHTTPServerTransport> = {};
 
-app.post("/mcp", requireAuth, async (req: Request, res: Response) => {
-  const sessionId = req.header("mcp-session-id");
-  let transport: StreamableHTTPServerTransport;
+  app.post(path, requireAuth, async (req: Request, res: Response) => {
+    const sessionId = req.header("mcp-session-id");
+    let transport: StreamableHTTPServerTransport;
 
-  if (sessionId && transports[sessionId]) {
-    transport = transports[sessionId];
-  } else if (!sessionId && isInitializeRequest(req.body)) {
-    transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (id: string) => {
-        transports[id] = transport;
-      },
-    });
-    transport.onclose = () => {
-      if (transport.sessionId) delete transports[transport.sessionId];
-    };
-    const server = createServer();
-    await server.connect(transport);
-  } else {
-    res.status(400).json({
-      jsonrpc: "2.0",
-      error: { code: -32000, message: "Bad Request: no valid session ID" },
-      id: null,
-    });
-    return;
+    if (sessionId && transports[sessionId]) {
+      transport = transports[sessionId];
+    } else if (!sessionId && isInitializeRequest(req.body)) {
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (id: string) => {
+          transports[id] = transport;
+        },
+      });
+      transport.onclose = () => {
+        if (transport.sessionId) delete transports[transport.sessionId];
+      };
+      const server = createServer({ tools, allowLocalFiles: ALLOW_FILE_PATH });
+      await server.connect(transport);
+    } else {
+      res.status(400).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Bad Request: no valid session ID" },
+        id: null,
+      });
+      return;
+    }
+
+    await transport.handleRequest(req, res, req.body);
+  });
+
+  async function handleSessionRequest(req: Request, res: Response): Promise<void> {
+    const sessionId = req.header("mcp-session-id");
+    if (!sessionId || !transports[sessionId]) {
+      res.status(400).send("Invalid or missing session ID");
+      return;
+    }
+    await transports[sessionId].handleRequest(req, res);
   }
 
-  await transport.handleRequest(req, res, req.body);
-});
-
-async function handleSessionRequest(req: Request, res: Response): Promise<void> {
-  const sessionId = req.header("mcp-session-id");
-  if (!sessionId || !transports[sessionId]) {
-    res.status(400).send("Invalid or missing session ID");
-    return;
-  }
-  await transports[sessionId].handleRequest(req, res);
+  app.get(path, requireAuth, handleSessionRequest);
+  app.delete(path, requireAuth, handleSessionRequest);
 }
 
-app.get("/mcp", requireAuth, handleSessionRequest);
-app.delete("/mcp", requireAuth, handleSessionRequest);
+mountMcp("/mcp", "all");
+mountMcp("/mcp/read", "read");
+mountMcp("/mcp/write", "write");
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
 if (!AUTH_TOKEN && !LOOPBACK.has(HOST)) {
