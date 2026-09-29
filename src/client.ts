@@ -29,6 +29,19 @@ export interface BinaryResponse {
 const REQUEST_TIMEOUT_MS = 30_000;
 const BINARY_TIMEOUT_MS = 60_000;
 
+/**
+ * A Rentvine ID as a URL path segment: digits only. IDs come from tool
+ * arguments (a model writes them), so "12/../../leases" or "12?x=" must not
+ * reach another API path with the manager credentials.
+ */
+function idSegment(value: number | string): string {
+  const s = String(value).trim();
+  if (!/^\d{1,18}$/.test(s)) {
+    throw new Error(`Not a Rentvine ID: ${JSON.stringify(String(value).slice(0, 40))}`);
+  }
+  return s;
+}
+
 function getClientArgs(): ClientArgs {
   const apiKey = process.env.RENTVINE_API_KEY ?? "";
   const apiSecret = process.env.RENTVINE_API_SECRET ?? "";
@@ -124,11 +137,11 @@ export async function fetchProperties(): Promise<Row[]> {
 }
 
 export async function fetchProperty(propertyId: string): Promise<unknown> {
-  return await get(`/properties/${propertyId}`);
+  return await get(`/properties/${idSegment(propertyId)}`);
 }
 
 export async function fetchUnits(propertyRentvineId: string): Promise<Row[]> {
-  return unwrap(await get(`/properties/${propertyRentvineId}/units`));
+  return unwrap(await get(`/properties/${idSegment(propertyRentvineId)}/units`));
 }
 
 /* ------------------------------------------------------------------ */
@@ -161,7 +174,7 @@ export async function fetchVendors(): Promise<Row[]> {
 }
 
 export async function fetchVendor(vendorId: string): Promise<unknown> {
-  return await get(`/vendors/${vendorId}`);
+  return await get(`/vendors/${idSegment(vendorId)}`);
 }
 
 /* ------------------------------------------------------------------ */
@@ -208,7 +221,7 @@ export async function updateWorkOrder(
   // resource path, with a *bare* body — no { workOrder: {...} } envelope, even
   // though reads return one. Envelope POSTs return 200 but silently no-op.
   // Partial bodies are honored; only send the fields you want to change.
-  return await request("POST", `/maintenance/work-orders/${workOrderId}`, {
+  return await request("POST", `/maintenance/work-orders/${idSegment(workOrderId)}`, {
     body: updates,
   });
 }
@@ -260,14 +273,14 @@ export async function fetchFiles(
 }
 
 export async function fetchFile(fileId: number | string): Promise<unknown> {
-  return await get(`/files/${fileId}`, { includes: "attachment" });
+  return await get(`/files/${idSegment(fileId)}`, { includes: "attachment" });
 }
 
 export async function downloadFileBinary(
   fileId: number | string,
 ): Promise<BinaryResponse> {
   const { baseUrl, headers } = getClientArgs();
-  const url = new URL(`${baseUrl}/files/${fileId}/download`);
+  const url = new URL(`${baseUrl}/files/${idSegment(fileId)}/download`);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), BINARY_TIMEOUT_MS);

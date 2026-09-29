@@ -1,0 +1,11 @@
+node_modules
+dist
+reference
+scripts
+.git
+.env
+.env.*
+start-mcp.sh
+ecosystem.config.cjs
+.pm2
+*.tgz

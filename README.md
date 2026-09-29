@@ -369,6 +369,35 @@ Rentvine credentials ever leave the server.
 | **Transport** | Streamable HTTP |
 | **Auth** | `Authorization: Bearer <MCP_AUTH_TOKEN>` |
 
+**Read and write endpoints.** Besides `/mcp` (every tool), the server serves
+the same token on two narrower paths:
+
+| Path | Tools |
+|---|---|
+| `/mcp/read` | Everything that only reads — nothing changes in Rentvine |
+| `/mcp/write` | Only `create_work_order`, `update_work_order`, `create_bill`, `upload_file` |
+
+A client that should never change data connects to `/mcp/read` only; an agent
+platform can connect to both and require a person's approval for every call on
+`/mcp/write`. Both are **stateless**: each request gets its own server holding
+only that path's tools, so there are no sessions to lose on a restart and any
+replica can answer. `/mcp` keeps in-memory sessions as before; an unknown or
+ended session there now gets `404` (the MCP spec's cue to start a new session).
+
+**`upload_file`'s `file_path`** reads a file from the *server's* disk. Over
+stdio that's your machine; over HTTP it's the server, so a caller could upload
+any file the server can read — its own credentials included. `/mcp` keeps it as
+before (set `RENTVINE_ALLOW_FILE_PATH=0` to turn it off — recommended once no
+client relies on it); `/mcp/read` and `/mcp/write` never offer it (send
+`file_content_base64` + `file_name`).
+
+**Who a call is for.** On `/mcp/read` and `/mcp/write` an agent platform can
+send `x-rentor-user` (the person's email) and `x-rentor-bot` (the bot). Every
+tool call — on any endpoint — writes one JSON line to stdout:
+`{"event":"tool_call","endpoint":"/mcp/write","tool":"create_work_order","user":"…","bot":"…","ok":true,"ms":412}`
+— never the arguments or the result. The headers are attribution, not access
+control: any client holding the token could set them.
+
 **Claude Code / Claude Desktop / Cursor / Windsurf / VS Code**
 
 ```json
@@ -426,8 +455,22 @@ bearer header.
 | `MCP_AUTH_TOKEN` | Bearer token clients must present on `/mcp`. Generate with `openssl rand -hex 32`. **Always set this.** The server only *enforces* it at startup when `HOST` is non-loopback — behind nginx that check never fires, so an empty value publishes an open endpoint. |
 | `PORT` | HTTP server port (default: `3000`). Use `18003` / `18004` per the table above. |
 | `HOST` | Bind address (default: `0.0.0.0`). Set `127.0.0.1` so only nginx can reach it. |
+| `RENTVINE_ALLOW_FILE_PATH` | `0` turns off `upload_file`'s `file_path` on `/mcp` (reads the server's own disk). Default: on, as before. `/mcp/read` and `/mcp/write` never offer it; stdio always does. |
 
 All of these are set in `start-mcp.sh`, one block per environment.
+
+### Docker
+
+```bash
+docker build -t rentvine-mcp .
+docker run --rm -p 127.0.0.1:18009:3000 \
+  -e RENTVINE_API_KEY -e RENTVINE_API_SECRET -e RENTVINE_COMPANY -e MCP_AUTH_TOKEN \
+  rentvine-mcp
+```
+
+The image runs `dist/http.js` as the unprivileged `node` user on `0.0.0.0:3000`
+(so `MCP_AUTH_TOKEN` is required — it refuses to start without one) with a
+`/health` check. Put TLS in front of it as for pm2.
 
 ---
 
